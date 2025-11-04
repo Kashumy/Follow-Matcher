@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GitHub - Follow Matcher</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#f7f9fc;color:#0b1220;margin:0;padding:0;display:flex;justify-content:center}
+.container{width:100%;max-width:800px;margin:20px;padding:16px;background:#fff;box-sizing:border-box; max-height: calc(100vh - 50px); overflow: hidden scroll;}
+h1{font-size:18px;margin:0 0 12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+input[type=text],input[type=password]{flex:1 1 20px;padding:6px;border:1px solid #d6dde6; outline:0px solid white; }
+input[type=text]:hover,input[type=password]:hover{flex:1 1 20px;padding:6px;border:1px solid #d6dde6; outline:2px solid #7FCEE7 }
+button{padding:6px 12px;border:none;background:#0b66ff;color:#fff;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+#msg{margin:6px 0;font-size:13px;color:#555}
+.table{width:100%;border-collapse:collapse;margin-top:12px}
+.table th,.table td{padding:6px;border-bottom:1px solid #eee;text-align:left}
+.user-row{display:flex;gap:6px;align-items:center}
+.avatar{width:36px;height:36px;object-fit:cover}
+.unfollow{background:#ef4444;color:#fff}
+.progress-container{width:100%;height:6px;background:#e0e0e0;margin:10px 0;overflow:hidden}
+.progress-bar{width:0%;height:100%;background:#0b66ff;transition:width .2s linear}
+@media(max-width:500px){.row{flex-direction:column}}
+a{ text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1 style="text-align:center;"> GitHub Follow Matcher </h1>
+<div class="row">
+<input id="username" type="text" placeholder="Your Github User Name">
+<input id="token" type="password" placeholder="Your GitHub token">
+<button id="load">Load</button>
+</div>
+<div id="msg">Enter Username And Token</div>
+<div class="progress-container"><div id="progress" class="progress-bar"></div></div>
+<div id="controls" style="display:none;margin-top:10px">
+<button id="unfollowAll">Unfollow All</button>
+</div>
+<table id="result" class="table" style="display:none">
+<thead><tr><th>User</th><th>Action</th></tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+<p style="position:absolute; z-index: -1; bottom:0; right:8px; font-size:6px;">By Kashumy GitHub</p>
+<script>
+async function fetchPaged(url,headers,onProgress){
+ let items=[]; let next=url; let page=0
+ while(next){
+  const r=await fetch(next,{headers})
+  if(!r.ok)throw new Error('HTTP '+r.status)
+  const data=await r.json()
+  items=items.concat(data)
+  page++
+  if(onProgress)onProgress(page,data.length)
+  const link=r.headers.get('link')
+  if(link){
+   const m=link.match(/<([^>]+)>;\s*rel="next"/)
+   next=m?m[1]:null
+  }else next=null
+ }
+ return items
+}
+function el(tag,props={},...children){
+ const e=document.createElement(tag)
+ for(const k in props)if(k.startsWith('on'))e[k]=props[k];else e.setAttribute(k,props[k])
+ for(const c of children)if(typeof c=='string')e.appendChild(document.createTextNode(c));else if(c) e.appendChild(c)
+ return e
+}
+const loadBtn=document.getElementById('load')
+const msg=document.getElementById('msg')
+const tbody=document.getElementById('tbody')
+const resultTable=document.getElementById('result')
+const controls=document.getElementById('controls')
+const unfollowAllBtn=document.getElementById('unfollowAll')
+const progressBar=document.getElementById('progress')
+let toUnfollow=[]
+loadBtn.addEventListener('click',async()=>{
+ loadBtn.disabled=true
+ tbody.innerHTML=''
+ resultTable.style.display='none'
+ controls.style.display='none'
+ toUnfollow=[]
+ progressBar.style.width='0%'
+ const username=document.getElementById('username').value.trim()
+ const token=document.getElementById('token').value.trim()
+ if(!username||!token){msg.textContent='Enter username and token.';loadBtn.disabled=false;return}
+ msg.textContent='Loading...'
+ const headers={Authorization:'token '+token,Accept:'application/vnd.github+json'}
+ try{
+  const meResp=await fetch('https://api.github.com/user',{headers})
+  if(!meResp.ok)throw new Error('Authentication Error: '+meResp.status)
+  const me=await meResp.json()
+  msg.textContent='Logged as '+me.login
+  let progressCount=0
+  const updateProgress=(page,count)=>{progressCount+=count;progressBar.style.width=Math.min(progressCount/50*100,100)+'%'}
+  const following=await fetchPaged('https://api.github.com/users/'+encodeURIComponent(username)+'/following',headers,updateProgress)
+  const followers=await fetchPaged('https://api.github.com/users/'+encodeURIComponent(username)+'/followers',headers,updateProgress)
+  progressBar.style.width='100%'
+  const followersMap={}
+  for(const f of followers)followersMap[f.login]=true
+  const notFollowingBack=following.filter(u=>!followersMap[u.login])
+  if(notFollowingBack.length===0){msg.textContent='Nobody youre following is not following you';loadBtn.disabled=false;return}
+  msg.textContent='Found '+notFollowingBack.length+" Users, that's not following you"
+  for(const u of notFollowingBack){
+   const tr=document.createElement('tr')
+   const td1=document.createElement('td')
+   const box=document.createElement('div');box.className='user-row'
+   const img=document.createElement('img');img.src=u.avatar_url;img.className='avatar'
+   const v=document.createElement('div')
+   const name=el('div',{},el('a',{href:u.html_url,target:'_blank'},u.login))
+   const bio=el('div',{style:'font-size:12px;color:#555'},u.name?u.name+' · ':'',u.bio?u.bio.substring(0,120):'')
+   v.appendChild(name);v.appendChild(bio)
+   box.appendChild(img);box.appendChild(v)
+   td1.appendChild(box)
+   const td2=document.createElement('td')
+   const btn=document.createElement('button');btn.textContent='Unfollow';btn.dataset.user=u.login
+   btn.addEventListener('click', async ev => {
+  btn.disabled = true
+  const user = u.login
+  if (btn.textContent === 'Unfollow') {
+    btn.textContent = '...'
+    try {
+      const r = await fetch(`https://api.github.com/user/following/${encodeURIComponent(user)}`, { method: 'DELETE', headers })
+      if (r.status === 204) {
+        btn.textContent = 'Follow'
+        btn.className = 'unfollow'
+      } else btn.textContent = 'Error'
+    } catch(e) { btn.textContent = 'Error' }
+  } else if (btn.textContent === 'Follow') {
+    btn.textContent = '...'
+    try {
+      const r = await fetch(`https://api.github.com/user/following/${encodeURIComponent(user)}`, { method: 'PUT', headers })
+      if (r.status === 204) {
+        btn.textContent = 'Unfollow'
+        btn.className = ''
+      } else btn.textContent = 'Error'
+    } catch(e) { btn.textContent = 'Error' }
+  }
+  btn.disabled = false
+})
+
+   td2.appendChild(btn)
+   tr.appendChild(td1);tr.appendChild(td2)
+   tbody.appendChild(tr)
+   toUnfollow.push(u.login)
+  }
+  resultTable.style.display=''
+  controls.style.display=''
+ }catch(e){msg.textContent='Error Generated: '+e.message}finally{loadBtn.disabled=false}
+})
+unfollowAllBtn.addEventListener('click',async()=>{
+ if(!confirm('Are you sure to unfollow all users not following you ?'))return
+ unfollowAllBtn.disabled=true
+ const token=document.getElementById('token').value.trim()
+ const headers={Authorization:'token '+token,Accept:'application/vnd.github+json'}
+ const buttons=[...document.querySelectorAll('button[data-user]')]
+ for(const b of buttons){
+  if(b.disabled)continue
+  b.disabled=true
+  b.textContent='...'
+  try{
+   const user=b.dataset.user
+   const r=await fetch('https://api.github.com/user/following/'+encodeURIComponent(user),{method:'DELETE',headers})
+   if(r.status===204){b.textContent='Unfollow';b.className='unfollow'}else{b.textContent='Error'}
+  }catch(e){b.textContent='Error'}
+ }
+ unfollowAllBtn.disabled=false
+})
+</script>
+</div>
+</body>
+</html>
